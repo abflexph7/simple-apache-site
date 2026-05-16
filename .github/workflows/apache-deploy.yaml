@@ -1,0 +1,96 @@
+name: Deploy Apache Web Server
+
+on:
+  push:
+    branches: [ main ]
+    # Removed pull_request to prevent deploying unmerged code
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+
+      - name: Validate website files
+        run: |
+          set -e
+          test -d public-html
+          test -f public-html/index.html
+          test -f public-html/about.html
+          python3 - <<'PY'
+            import glob
+            import html.parser
+            import pathlib
+
+            for path in sorted(glob.glob('public-html/*.html')):
+              text = pathlib.Path(path).read_text()
+              parser = html.parser.HTMLParser()
+              parser.feed(text)
+              parser.close()
+            PY
+
+      - name: Security scan for secrets
+        run: |
+          set -e
+          if grep -R -nE '(password|secret|api[_-]?key|token|bearer|private_key|aws_access_key_id|aws_secret_access_key)' public-html; then
+            echo "Potential secret or credential pattern found in public-html"
+            exit 1
+          fi
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    # Prevent concurrent deployments
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 1
+
+    - name: Restore apt cache
+      uses: actions/cache@v3
+      with:
+        path: |
+          /var/cache/apt/archives
+          /var/lib/apt/lists
+        key: ${{ runner.os }}-apt-cache-apache2
+        restore-keys: |
+          ${{ runner.os }}-apt-cache-
+    
+    - name: Install Apache
+      run: |
+        set -e  # Exit on any error
+        sudo bash -lc 'apt-get update && apt-get install -y apache2'
+      
+    - name: Enable required Apache modules
+      run: |
+        set -e
+        sudo bash -lc 'a2enmod rewrite && a2enmod ssl'
+      
+    - name: Deploy website files
+      run: |
+        set -e
+        sudo bash -lc '
+          rm -rf /var/www/html/*
+          cp -r public-html/* /var/www/html/
+          chown -R www-data:www-data /var/www/html
+          chmod -R 755 /var/www/html
+        '
+      
+    - name: Restart Apache service
+      run: |
+        set -e
+        sudo bash -lc 'systemctl restart apache2 && systemctl enable apache2'
+      
+    - name: Verify deployment
+      run: |
+        set -e
+        sudo systemctl status apache2
+        # Check that the web server responds
+        sudo curl -f http://localhost/ > /dev/null || exit 1
+        echo "Deployment successful!"
