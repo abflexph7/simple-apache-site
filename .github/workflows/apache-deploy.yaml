@@ -20,16 +20,16 @@ jobs:
           test -f public-html/index.html
           test -f public-html/about.html
           python3 - <<'PY'
-            import glob
-            import html.parser
-            import pathlib
+          import glob
+          import html.parser
+          import pathlib
 
-            for path in sorted(glob.glob('public-html/*.html')):
+          for path in sorted(glob.glob('public-html/*.html')):
               text = pathlib.Path(path).read_text()
               parser = html.parser.HTMLParser()
               parser.feed(text)
               parser.close()
-            PY
+          PY
 
       - name: Security scan for secrets
         run: |
